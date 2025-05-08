@@ -11,6 +11,7 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from datetime import datetime, timedelta
 import requests
 import logging
+import io
 
 # DAG default arguments
 default_args = {
@@ -33,9 +34,8 @@ def get_request_headers():
     }
 
 def _download_nba_data(**context):
-    """Download NBA data and save to temp location"""
+    """Download NBA data and return content"""
     url = "https://www.openintro.org/data/csv/nba_heights.csv"
-    local_path = "/tmp/nba_heights.csv"
     
     try:
         # Get data with proper headers
@@ -47,51 +47,46 @@ def _download_nba_data(**context):
         if not any(t in content_type.lower() for t in ['csv', 'text/plain']):
             raise ValueError(f"Unexpected content type: {content_type}")
         
-        # Save the file
-        with open(local_path, 'wb') as f:
-            f.write(response.content)
+        # Get the content
+        content = response.content
         
-        logging.info(f"Successfully downloaded data to {local_path}")
-        return local_path
+        # Push the content to XCom
+        context['task_instance'].xcom_push(key='nba_data', value=content.decode('utf-8'))
+        logging.info("Successfully downloaded NBA data")
         
     except requests.exceptions.HTTPError as e:
         logging.error(f"HTTP error occurred: {str(e)}")
         if e.response.status_code == 406:
             logging.error("Received 406 error - check headers configuration")
         raise
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error downloading data: {str(e)}")
-        raise
     except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
+        logging.error(f"Error downloading data: {str(e)}")
         raise
 
 def _upload_to_minio(**context):
-    """Upload downloaded file to MinIO"""
+    """Upload data to MinIO"""
     try:
-        local_path = context['task_instance'].xcom_pull(task_ids='download_nba_data')
-        if not local_path:
-            raise ValueError("Failed to get file path from previous task")
-            
+        # Get content from XCom
+        content = context['task_instance'].xcom_pull(task_ids='download_nba_data', key='nba_data')
+        if not content:
+            raise ValueError("Failed to get data from previous task")
+        
+        # Generate path with date
         date_str = context['logical_date'].strftime('%Y-%m-%d')
         minio_path = f"nba/heights/nba_heights_{date_str}.csv"
         
         # Using S3Hook since MinIO is S3-compatible
         s3_hook = S3Hook('minio_s3')
-        s3_hook.load_file(
-            filename=local_path,
+        
+        # Upload the content
+        s3_hook.load_string(
+            string_data=content,
             key=minio_path,
             bucket_name='raw-data',
             replace=True
         )
         
         logging.info(f"Successfully uploaded to MinIO: {minio_path}")
-        
-        # Cleanup
-        import os
-        if os.path.exists(local_path):
-            os.remove(local_path)
-            logging.info("Local file cleaned up")
             
     except Exception as e:
         logging.error(f"Error in upload task: {str(e)}")
