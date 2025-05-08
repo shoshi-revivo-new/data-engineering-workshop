@@ -11,8 +11,6 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from datetime import datetime, timedelta
 import requests
 import logging
-import base64
-import io
 
 # DAG default arguments
 default_args = {
@@ -48,9 +46,9 @@ def _download_nba_data(**context):
         if not any(t in content_type.lower() for t in ['csv', 'text/plain']):
             raise ValueError(f"Unexpected content type: {content_type}")
         
-        # Convert bytes to base64 string for XCom
-        content_b64 = base64.b64encode(response.content).decode('utf-8')
-        context['task_instance'].xcom_push(key='nba_data', value=content_b64)
+        # Store content as string in XCom
+        content = response.text
+        context['task_instance'].xcom_push(key='nba_data', value=content)
         logging.info("Successfully downloaded NBA data")
         
     except requests.exceptions.HTTPError as e:
@@ -65,13 +63,10 @@ def _download_nba_data(**context):
 def _upload_to_minio(**context):
     """Upload data to MinIO"""
     try:
-        # Get content from XCom and convert back to bytes
-        content_b64 = context['task_instance'].xcom_pull(task_ids='download_nba_data', key='nba_data')
-        if not content_b64:
+        # Get content from XCom
+        content = context['task_instance'].xcom_pull(task_ids='download_nba_data', key='nba_data')
+        if not content:
             raise ValueError("Failed to get data from previous task")
-        
-        # Convert base64 back to bytes
-        content = base64.b64decode(content_b64)
         
         # Generate path with date
         date_str = context['logical_date'].strftime('%Y-%m-%d')
@@ -81,8 +76,8 @@ def _upload_to_minio(**context):
         s3_hook = S3Hook('minio_s3')
         
         # Upload using S3Hook
-        s3_hook.load_bytes(
-            bytes_data=content,
+        s3_hook.load_string(
+            string_data=content,
             bucket_name="workshop-data",
             key=minio_path,
             replace=True
