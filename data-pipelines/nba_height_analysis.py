@@ -75,12 +75,16 @@ def _upload_to_minio(**context):
         # Using S3Hook with MinIO connection
         s3_hook = S3Hook('minio_s3')
         
-        # Upload using S3Hook
+        # Upload using S3Hook with additional MinIO parameters
         s3_hook.load_string(
             string_data=content,
             bucket_name="workshop-data",
             key=minio_path,
-            replace=True
+            replace=True,
+            extra_args={
+                'endpoint_url': s3_hook.get_connection('minio_s3').extra_dejson.get('host'),
+                'verify': False  # אם משתמשים בחיבור HTTP ולא HTTPS
+            }
         )
         
         logging.info(f"Successfully uploaded to MinIO: {minio_path}")
