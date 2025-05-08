@@ -11,7 +11,6 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from datetime import datetime, timedelta
 import requests
 import logging
-import io
 
 # DAG default arguments
 default_args = {
@@ -47,11 +46,8 @@ def _download_nba_data(**context):
         if not any(t in content_type.lower() for t in ['csv', 'text/plain']):
             raise ValueError(f"Unexpected content type: {content_type}")
         
-        # Get the content
-        content = response.content
-        
-        # Push the content to XCom
-        context['task_instance'].xcom_push(key='nba_data', value=content.decode('utf-8'))
+        # Get the content as bytes and store in XCom
+        context['task_instance'].xcom_push(key='nba_data', value=response.content)
         logging.info("Successfully downloaded NBA data")
         
     except requests.exceptions.HTTPError as e:
@@ -75,12 +71,12 @@ def _upload_to_minio(**context):
         date_str = context['logical_date'].strftime('%Y-%m-%d')
         minio_path = f"nba/heights/nba_heights_{date_str}.csv"
         
-        # Using S3Hook since MinIO is S3-compatible
+        # Using existing MinIO connection
         s3_hook = S3Hook('minio_s3')
         
-        # Upload the content
-        s3_hook.load_string(
-            string_data=content,
+        # Upload the content as bytes
+        s3_hook.load_bytes(
+            bytes_data=content,
             key=minio_path,
             bucket_name='raw-data',
             replace=True
