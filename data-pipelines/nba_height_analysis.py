@@ -7,11 +7,12 @@ Includes error handling, automatic retries, and data versioning.
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from datetime import datetime, timedelta
 import requests
 import logging
-import base64  # נוסיף את הייבוא הזה בראש הקובץ
+import base64
+from minio import Minio
+import io
 
 # DAG default arguments
 default_args = {
@@ -76,15 +77,25 @@ def _upload_to_minio(**context):
         date_str = context['logical_date'].strftime('%Y-%m-%d')
         minio_path = f"nba/heights/nba_heights_{date_str}.csv"
         
-        # Using existing MinIO connection
-        s3_hook = S3Hook('minio_s3')
+        # Create MinIO client
+        minio_client = Minio(
+            "minio:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
+            secure=False
+        )
         
-        # Upload the content as bytes
-        s3_hook.load_bytes(
-            bytes_data=content,
-            key=minio_path,
-            bucket_name='raw-data',
-            replace=True
+        # Make sure bucket exists
+        if not minio_client.bucket_exists("raw-data"):
+            minio_client.make_bucket("raw-data")
+        
+        # Upload using MinIO client
+        minio_client.put_object(
+            bucket_name="workshop-data",
+            object_name=minio_path,
+            data=io.BytesIO(content),
+            length=len(content),
+            content_type='text/csv'
         )
         
         logging.info(f"Successfully uploaded to MinIO: {minio_path}")
