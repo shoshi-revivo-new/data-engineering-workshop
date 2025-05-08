@@ -77,22 +77,15 @@ def _upload_to_minio(**context):
         date_str = context['logical_date'].strftime('%Y-%m-%d')
         minio_path = f"nba/heights/nba_heights_{date_str}.csv"
         
-        # Using S3Hook with MinIO connection and extra params
-        s3_hook = S3Hook(
-            aws_conn_id='minio_s3',
-            verify=False,  # חשוב כי MinIO משתמש ב-HTTP
-            config_kwargs={
-                'signature_version': 's3v4'
-            }
-        )
+        # Using S3Hook with MinIO connection
+        s3_hook = S3Hook('minio_s3')
         
         # Upload using S3Hook
         s3_hook.load_bytes(
             bytes_data=content,
             bucket_name="workshop-data",
             key=minio_path,
-            replace=True,
-            acl_policy='private'
+            replace=True
         )
         
         logging.info(f"Successfully uploaded to MinIO: {minio_path}")
